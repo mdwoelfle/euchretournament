@@ -37,9 +37,9 @@ if 'players' not in locals():
                      idNum,
                      nbyes=None,
                      opponents=None,
+                     opponentRoundScores=None,
                      partners=None,
                      roundScores=None,
-                     score=None,
                      tables=None,
                      ):
             # Name the player
@@ -47,35 +47,18 @@ if 'players' not in locals():
             # Give the player an id number
             self.id = idNum
             # Set player's total number of byes as int
-            if nbyes is None:
-                self.nbyes = 0
-            else:
-                self.nbyes = nbyes
+            self.nbyes = (0 if nbyes is None else nbyes)
             # Set player's opponents for each round as list of opponent lists
-            if opponents is None:
-                self.opponents = []
-            else:
-                self.opponents = opponents
+            self.opponents = ([] if opponents is None else opponents)
+            # Set opponent scores for each round as list
+            self.opponentRoundScores = ([] if opponentRoundScores is None
+                                        else opponentRoundScores)
             # Set player's partner for each round as list
-            if partners is None:
-                self.partners = []
-            else:
-                self.partners = partners
+            self.partners = ([] if partners is None else partners)
             # Set player's scores for each round as list
-            if roundScores is None:
-                self.roundScores = []
-            else:
-                self.roundScores = roundScores
-            # Set player's total score as int
-            if score is None:
-                self.score = sum(self.roundScores)
-            else:
-                self.score = score
+            self.roundScores = ([] if roundScores is None else roundScores)
             # Set table player sat at for each round
-            if tables is None:
-                self.tables = []
-            else:
-                self.tables = tables
+            self.tables = ([] if tables is None else tables)
 
         # Set thing that will show up when class is called.
         #   Should be super detailed
@@ -90,6 +73,11 @@ if 'players' not in locals():
                                                  for k in j])
                                   for j in self.opponents]) +
                  '\']], ' +
+                 'opponentRoundScores=[' +
+                 ', '.join(['{:d}'.format(j)
+                            for j in self.opponentRoundScores]) +
+                 '], ' +
+                 'opponentscore={:d}, '.format(self.opponentscore()) +
                  'partners=[\'' +
                  '\', \''.join([j if j else 'None'
                                 for j in self.partners]) +
@@ -97,7 +85,7 @@ if 'players' not in locals():
                  'roundScores=[' +
                  ', '.join(['{:d}'.format(j) for j in self.roundScores]) +
                  '], ' +
-                 'score={:d}, '.format(self.score) +
+                 'score={:d}, '.format(self.score()) +
                  'tables=[' + ', '.join(['{:d}'.format(j) if j else 'None'
                                          for j in self.tables]) + ']' +
                  ')'
@@ -116,6 +104,7 @@ if 'players' not in locals():
 
         def addscore(self,
                      roundScore,
+                     opponentRoundScore,
                      jRd=None):
             """
             Add score for the given (current) round and update total
@@ -136,8 +125,22 @@ if 'players' not in locals():
                 else:
                     raise IndexError('Round number too high; missing scores.')
 
-            # Update total score
-            self.score = sum(self.roundScores)
+            # Add score for opponent to playercard
+            try:
+                # Try to add score for previous round
+                self.opponentRoundScores[jRd-1] = opponentRoundScore
+            except IndexError:
+                # Otherwise, add score for next round
+                if len(self.opponentRoundScores) == (jRd - 1):
+                    self.opponentRoundScores.append(opponentRoundScore)
+                else:
+                    raise IndexError('Round number too high; missing scores.')
+
+        def opponentscore(self):
+            """
+            Get opponent total score
+            """
+            return sum(self.opponentRoundScores)
 
         def printallrounds(self):
             """
@@ -176,6 +179,22 @@ if 'players' not in locals():
 
             # Print round information for given round
             print s
+
+        def score(self):
+            """
+            Get own total score
+            """
+            return sum(self.roundScores)
+
+        def victories(self):
+            """
+            Get count of round-by-round victories
+            """
+            # Get number of rounds
+            nRds = len(self.tables)
+            # Compute number of victorious rounds
+            return sum([self.roundScores[jRd] > self.opponentRoundScores[jRd]
+                        for jRd in range(nRds)])
 
 
 def addopponents(playerDict,
@@ -295,18 +314,18 @@ def addscores(playerDict,
         raise IndexError('Round {:d} not yet reached; '.format(jRd) +
                          'cannot add score for this round.')
 
-    # Add score for given player
-    playerDict[playerName].addscore(selfScore, jRd)
+    # Add score for given player and record opponents score
+    playerDict[playerName].addscore(selfScore, opponentScore, jRd)
 
     # Add score for player's partner
     playerDict[playerDict[playerName].partners[jRd-1]].addscore(
-        selfScore, jRd)
+        selfScore, opponentScore, jRd)
 
     # Add score for player's opponents
     playerDict[playerDict[playerName].opponents[jRd-1][0]].addscore(
-        opponentScore, jRd)
+        opponentScore, selfScore, jRd)
     playerDict[playerDict[playerName].opponents[jRd-1][1]].addscore(
-        opponentScore, jRd)
+        opponentScore, selfScore, jRd)
 
 
 def addtables(playerDict,
@@ -337,7 +356,9 @@ def addtables(playerDict,
 
 
 def assignbyes(playerDict,
-               finalRd_flag=False):
+               finalRd_flag=False,
+               forceByes_flag=False,
+               forceByeList=None):
     """
     Create list of players who will be forced to have byes this round
 
@@ -370,6 +391,10 @@ def assignbyes(playerDict,
                           'in uneven byes.')
         else:
             return newByeList
+
+    # Force byes on specific players for this round, if necessary
+    if forceByes_flag:
+        forcebye()
 
     # Select players who will have a bye this round
     newByeList = [playerName
@@ -426,6 +451,83 @@ def backupround(players,
             pickle.dump((players, roundNum), output, pickle.HIGHEST_PROTOCOL)
     except:
         print('could not save state')
+
+
+def breaktie(playerDict,
+             tiedPlayersList):
+    """
+    Apply tie breaker rules to standings as necessary
+    (1) Head to Head victories
+    (2) Total victories
+    (3) Fewest opponent points
+    """
+
+    # Determine where ties need to be broken perhaps with while loop
+    # for pIndex, jP in enumerate(rankedList[:-1]):
+    #    # Get list of all players which match score of the given player
+    #    tiedPlayers = [j for j in rankedList
+    #                   if playerDict[j].score == playerDict[jP].score]
+    #    print(jP)
+    #    print(tiedPlayers)
+
+    nRds = len(playerDict[tiedPlayersList[0]].tables)
+
+    # Check first tiebreaker: head to head victories
+    if len(tiedPlayersList) == 2:
+        p0 = tiedPlayersList[0]
+        p1 = tiedPlayersList[1]
+        p0wins = 0
+        p1wins = 0
+        # Brute forcing it for simplicity's sake
+        for jRd in range(nRds):
+            if p0 in playerDict[p1].opponents[jRd]:
+                if (playerDict[p0].roundScores[jRd] >
+                        playerDict[p1].roundScores[jRd]):
+                    p0wins = p0wins + 1
+                elif (playerDict[p0].roundScores[jRd] >
+                        playerDict[p1].roundScores[jRd]):
+                    p1wins = p1wins + 1
+
+        # Return if someone wins on head to heads
+        if p0wins > p1wins:
+            return ([p0, p1], [0, 1])
+        elif p0wins < p1wins:
+            return ([p1, p0], [0, 1])
+
+    # Check second and third tiebreakers:
+    #   total victories and fewest opponent points
+
+    # Get list of total victories for each tied player
+    victoryCountList = [playerDict[jP].victories()
+                        for jP in tiedPlayersList]
+
+    # SGet list of opponent total scores for each tied player
+    oppScoreList = [playerDict[jP].opponentscore()
+                    for jP in tiedPlayersList]
+
+    # Sort tied players first by total victories then by opponent total
+    #    scores
+    sortedPlayerList = [
+        x for (x, y, z) in sorted(
+            zip(tiedPlayersList,
+                victoryCountList,
+                oppScoreList),
+            key=lambda t: (-t[1],  # sort high to low on victories then
+                           t[2])   # sort low to high on points allowed
+            )
+        ]
+
+    subRanking = range(len(sortedPlayerList))
+
+    # Check if ties still persist, and update rankings accordingly
+    for jS, jP in enumerate(sortedPlayerList):
+        if all([playerDict[jP].victories() ==
+                playerDict[sortedPlayerList[jS-1]].victories(),
+                playerDict[jP].opponentscore() ==
+                playerDict[sortedPlayerList[jS-1]].opponentscore()]):
+            subRanking[jS] = min(subRanking[jS-1], 0)
+
+    return (sortedPlayerList, subRanking)
 
 
 def createround(playerDict, jRd,
@@ -568,7 +670,7 @@ def createround(playerDict, jRd,
     # Increment bye count for players with byes and assign score of 0
     for playerName in newByeList:
         playerDict[playerName].nbyes = playerDict[playerName].nbyes + 1
-        playerDict[playerName].addscore(0, jRd=jRd)
+        playerDict[playerName].addscore(0, 0, jRd=jRd)
 
     # Write human readable round assignments to files
     writeround(newRoundList,
@@ -628,6 +730,14 @@ def findmissingscores(playerDict,
         return (missingTables, missingPlayers)
 
 
+def forcebye():
+    """
+    Force a given player to have a bye for the upcoming round
+    """
+
+    raise NotImplementedError('code yet to be written')
+
+
 def getstandings(playerDict):
     """
     Create list of standings by player score
@@ -636,13 +746,29 @@ def getstandings(playerDict):
     playerList = playerDict.keys()
 
     # Get list of total score
-    scoreList = [playerDict[jP].score for jP in playerList]
+    scoreList = [playerDict[jP].score() for jP in playerList]
 
     # Sort by total score
     rankedList = [x for (y, x) in sorted(zip(scoreList, playerList))][::-1]
 
     # Return result
     return rankedList
+
+    def sumopponentscores(playerDict,
+                          playerName):
+        """
+        Get round by round scores for opponents as list
+        """
+        # Determine number of rounds recorded
+        nRds = len(playerDict[playerName].roundscores)
+
+        # Determine sccores of opponents each round
+        oppScores = [playerDict[
+            playerDict[playerName].opponents[jRd][0]].roundScores[jRd]
+            for jRd in range(nRds)
+            if playerDict[playerName].opponents[jRd][0] is not None]
+
+        return sum(oppScores)
 
 
 def isroundvalid(playerDict,
@@ -790,6 +916,42 @@ def printscoreboard(playerDict,
     # Get list of player names sorted by points (highest first)
     rankedList = getstandings(playerDict)
 
+    # Deal with ties
+    fixedTies = np.zeros(np.shape(rankedList))
+    playerRank = np.array(range(len(rankedList)))
+    newRankedList = [j for j in rankedList]
+    for jS, jP in enumerate(rankedList):
+        if fixedTies[jS] == 0:
+            # Pull list of players tied with the current player
+            tiedPlayersList = [
+                tP
+                for tP in rankedList
+                if playerDict[tP].score() == playerDict[jP].score()
+                ]
+            # If no one is tied with the current player, move on
+            if len(tiedPlayersList) == 1:
+                playerRank[jS] = jS + 1
+                newRankedList[jS] = rankedList[jS]
+                fixedTies[jS] = 1
+            else:
+                # Get subranking based on tiebreakers
+                subRankedList, subRank = breaktie(playerDict,
+                                                  tiedPlayersList)
+                # Update rankings and order based on subrankings
+                for tS, tR in enumerate(subRank):
+                    print(jS+tS)
+                    print(jS+tR+1)
+                    print('--')
+                    playerRank[jS + tS] = jS + tR + 1
+                    newRankedList[jS + tS] = subRankedList[tS]
+                    fixedTies[jS + tS] = 1
+        else:
+            continue
+
+    print(playerRank)
+    # Update rankedList
+    rankedList = newRankedList
+
     # Get minimum number of byes
     minByes = np.min(np.array([playerDict[jP].nbyes
                                for jP in playerDict.keys()]))
@@ -801,26 +963,53 @@ def printscoreboard(playerDict,
     # If printing to commmand line:
     # if toWhere.lower() in ['cmd', 'screen']:
     # Set header row
-    header = ('Standings after Round {:d}\n'.format(maxRds) +
-              ' #  Name' + ' '*12 + 'Pts  Pts/Rd\n')
+    header = ('Standings after Round {:d}\n\n'.format(maxRds) +
+              ' #  Name' + ' '*12 + 'Pts  OppPts  Wins  Pts/Rd  OppPts/Rd\n')
     # Get nicely formatted string for printing
-    s = '\n'.join(['{:2d}  {:15s}{:4d}{:s} {:6.1f}'.format(
-                   jS+1,
-                   playerDict[jP].name +
-                   ('*' if playerDict[jP].nbyes > minByes else ''),
-                   playerDict[jP].score,
-                   ('-' if len(playerDict[jP].roundScores) < maxRds
-                    else ' '),
-                   (playerDict[jP].score/float(
-                       len(playerDict[jP].roundScores) -
-                       playerDict[jP].nbyes)
-                    if playerDict[jP].nbyes != len(playerDict[jP].roundScores)
-                    else 0)
-                   )
+    s = '\n'.join([('{:2d}'.format(  # Rank
+                        js + 1  # playerRank[jS])
+                        # Don't use tiebreaking rank here as can only apply
+                        #   head to head for 2-way tie right now.
+                        if (playerDict[jP].score() !=
+                            playerDict[rankedList[jS-1]].score())
+                        else ' t') +
+                   '  {:15s}'.format(  # Name
+                       playerDict[jP].name +
+                       ('*' if playerDict[jP].nbyes > minByes
+                        else '')) +
+                   '{:4d}'.format(  # Pts
+                       playerDict[jP].score()) +
+                   '{:s}'.format(  # Signal missing score for a round
+                       '-' if len(playerDict[jP].roundScores) < maxRds
+                       else ' ') +
+                   '{:7d}'.format(  # OppPts
+                       playerDict[jP].opponentscore()) +
+                   '{:6d}'.format(  # Wins
+                       playerDict[jP].victories()) +
+                   '{:8.1f}'.format(  # Pts/Rd
+                       playerDict[jP].score()/float(
+                           len(playerDict[jP].roundScores) -
+                           playerDict[jP].nbyes)
+                       if (playerDict[jP].nbyes !=
+                           len(playerDict[jP].roundScores))
+                       else 0) +
+                   '{:11.1f}'.format(  # OppPts/Rd
+                       playerDict[jP].opponentscore()/float(
+                           len(playerDict[jP].roundScores) -
+                           playerDict[jP].nbyes)
+                       if (playerDict[jP].nbyes !=
+                           len(playerDict[jP].roundScores))
+                       else 0)
                    for jS, jP in enumerate(rankedList)])
+
     # Explain asterisks and dashes in footer row
-    footer = ('\n* = player has had an extra bye' +
-              '\n- = player has an unreported score')
+    footer = ('\n' +
+              '\nt = player tied with player above' +
+              '\n    (sorted by tiebreak rules if possible;' +
+              '\n     head-to-head only used for 2-way ties)' +
+              '\n* = player has had an extra bye' +
+              '\n- = player has an unreported score'
+              )
     if toWhere.lower() in ['cmd', 'screen']:
         print(header + s + footer)
     elif toWhere.lower() in ['file', 'f']:
@@ -986,14 +1175,14 @@ if __name__ == '__main__':
     # %% Define flags and other run criteria
 
     # True to produce bye-balancing round
-    finalRd_flag = True
+    finalRd_flag = False
 
     # Set number of rounds over which opponents will not be repeated
     opponentRepeatRdLimit = 2
 
     # Pin player to a table if needed
     pinnedPlayer_flag = True
-    pinnedPlayer = 'Player01'
+    pinnedPlayer = 'Player01'  # 'Matthew W'
     pinnedTable = 1
 
     # Set maximum number of guesses for creating a round
@@ -1010,7 +1199,7 @@ if __name__ == '__main__':
     backupRd_flag = True
 
     # Directory used for saving files
-    workDir = r'C:\Users\woelfle\Documents\PersonalStuff\euchre\2017\\'
+    workDir = r'C:\Users\woelfle\Documents\PersonalStuff\euchre\testing\\'
 
     # List of players to delete before running next round
     playersToDelete = [None]  # None  # list to remove players
