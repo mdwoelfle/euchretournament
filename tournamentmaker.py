@@ -193,8 +193,20 @@ if 'players' not in locals():
             # Get number of rounds
             nRds = len(self.tables)
             # Compute number of victorious rounds
-            return sum([self.roundScores[jRd] > self.opponentRoundScores[jRd]
-                        for jRd in range(nRds)])
+            try:
+                return sum([
+                    self.roundScores[jRd] > self.opponentRoundScores[jRd]
+                    for jRd in range(nRds)])
+            except IndexError as err:
+                # If cannot determine who won each round
+                try:
+                    return sum([
+                        self.roundScores[jRd] > self.opponentRoundScores[jRd]
+                        for jRd in range(nRds - 1)])
+                except IndexError as err:
+                    print('second time')
+                    print(self.name)
+                    raise IndexError(err)
 
 
 def addopponents(playerDict,
@@ -212,7 +224,7 @@ def addopponents(playerDict,
                 [newRoundList[jT+2], newRoundList[jT+3]])
         except KeyError as ke:
             if 'Filler' in newRoundList[jT]:
-                continue
+                pass
             else:
                 raise KeyError(ke)
 
@@ -222,7 +234,7 @@ def addopponents(playerDict,
                 [newRoundList[jT+2], newRoundList[jT+3]])
         except KeyError as ke:
             if 'Filler' in newRoundList[jT+1]:
-                continue
+                pass
             else:
                 raise KeyError(ke)
 
@@ -271,7 +283,7 @@ def addpartners(playerDict,
                 newRoundList[jP+1])
         except KeyError as ke:
             if 'Filler' in newRoundList[jP]:
-                continue
+                pass
             else:
                 raise KeyError(ke)
 
@@ -281,7 +293,7 @@ def addpartners(playerDict,
                 newRoundList[jP])
         except KeyError as ke:
             if 'Filler' in newRoundList[jP+1]:
-                continue
+                pass
             else:
                 raise KeyError(ke)
 
@@ -318,14 +330,32 @@ def addscores(playerDict,
     playerDict[playerName].addscore(selfScore, opponentScore, jRd)
 
     # Add score for player's partner
-    playerDict[playerDict[playerName].partners[jRd-1]].addscore(
-        selfScore, opponentScore, jRd)
+    try:
+        playerDict[playerDict[playerName].partners[jRd-1]].addscore(
+            selfScore, opponentScore, jRd)
+    except KeyError as err:
+        if 'Filler' in playerDict[playerName].partners[jRd-1][:6]:
+            pass
+        else:
+            raise KeyError(err)
 
     # Add score for player's opponents
-    playerDict[playerDict[playerName].opponents[jRd-1][0]].addscore(
-        opponentScore, selfScore, jRd)
-    playerDict[playerDict[playerName].opponents[jRd-1][1]].addscore(
-        opponentScore, selfScore, jRd)
+    try:
+        playerDict[playerDict[playerName].opponents[jRd-1][0]].addscore(
+            opponentScore, selfScore, jRd)
+    except KeyError as err:
+        if 'Filler' in playerDict[playerName].opponents[jRd-1][0]:
+            pass
+        else:
+            raise KeyError(err)
+    try:
+        playerDict[playerDict[playerName].opponents[jRd-1][1]].addscore(
+            opponentScore, selfScore, jRd)
+    except KeyError as err:
+        if 'Filler' in playerDict[playerName].opponents[jRd-1][1]:
+            pass
+        else:
+            raise KeyError(err)
 
 
 def addtables(playerDict,
@@ -365,6 +395,13 @@ def assignbyes(playerDict,
     Returns:
         list of players who will be assigned a bye this round
     """
+    # Set forceByeList if None given
+    if forceByeList is None:
+        forceByeList = []
+
+    # Get list of player names
+    playerList = list(playerDict.keys())
+
     # Make list of current bye counts
     nbyeList = np.array([playerDict[jp].nbyes for jp in playerDict.keys()])
 
@@ -394,11 +431,13 @@ def assignbyes(playerDict,
 
     # Force byes on specific players for this round, if necessary
     if forceByes_flag:
-        forcebye()
+        playerList = forcebye(playerList,
+                              forceByeList,
+                              nByesNeeded)
 
     # Select players who will have a bye this round
     newByeList = [playerName
-                  for playerName in playerDict.keys()
+                  for playerName in playerList
                   if playerDict[playerName].nbyes == minByes
                   ][:nByesNeeded]
     # Select extra players to have another bye if needed to get to number of
@@ -407,10 +446,23 @@ def assignbyes(playerDict,
         nByesStillNeeded = nByesNeeded - len(newByeList)
         newByeList.append(
             [playerName
-             for playerName in playerDict.keys()
+             for playerName in playerList
              if playerDict[playerName].nbyes != minByes
              ][:nByesStillNeeded]
             )
+
+    # Check that players who need a bye got them
+    if forceByes_flag:
+        if not set(forceByeList).issubset(newByeList):
+            errorStr = (
+                'Unable to foce byes for all requested players' +
+                '\n-----\n\nAttempted to force byes for:\n' +
+                ', '.join(forceByeList) +
+                '\n\nByes assigned to:\n' +
+                ', '.join(newByeList) + '\n\n' +
+                '-----')
+
+            raise ValueError(errorStr)
 
     return newByeList
 
@@ -533,6 +585,8 @@ def breaktie(playerDict,
 def createround(playerDict, jRd,
                 backupRd_flag=True,
                 finalRd_flag=False,
+                forceByes_flag=False,
+                forceByeList=None,
                 forceScoreReporting_flag=True,
                 maxRdAttempts=1e6,
                 opponentRepeatRdLimit=1,
@@ -588,7 +642,10 @@ def createround(playerDict, jRd,
     #   For finalRd_flag == True, assigns byes to all players who have not
     #   yet experienced the maximum number of byes
     newByeList = assignbyes(playerDict,
-                            finalRd_flag=finalRd_flag)
+                            finalRd_flag=finalRd_flag,
+                            forceByes_flag=forceByes_flag,
+                            forceByeList=forceByeList,
+                            )
 
     # Create list of eligible players for this round
     #   i.e. those not in newByeList
@@ -730,12 +787,28 @@ def findmissingscores(playerDict,
         return (missingTables, missingPlayers)
 
 
-def forcebye():
+def forcebye(playerList,
+             forceByeList,
+             nByesNeeded,
+             ):
     """
     Force a given player to have a bye for the upcoming round
     """
+    # Move players who are being forced to have a bye to the top of the list
+    for byeIndex, byeNeeder in enumerate(forceByeList):
+        # Find byeNeeder in list and move to top of playerList
+        jBN = playerList.index(byeNeeder)
 
-    raise NotImplementedError('code yet to be written')
+        # Move player from top (or next slot) of list to spot currently
+        #   occupied by the byeNeeder
+        playerList[jBN] = playerList[byeIndex]
+
+        # Put bye needer at or near the top of the list to ensure a bye is
+        #   given
+        playerList[byeIndex] = byeNeeder
+
+    # Return sorted list with those needing a bye at the top
+    return playerList
 
 
 def getstandings(playerDict):
@@ -912,6 +985,14 @@ def printscoreboard(playerDict,
                     ):
     """
     Print formatted list of standings
+
+    Args:
+        playerDict - dictionary of playercards
+
+    Kwargs:
+        standingsFile - full file for saving scoreboard
+        toWhere - one of 'cmd' and 'file'
+        workDir - directory to which autogenerated fileName will be saved
     """
     # Get list of player names sorted by points (highest first)
     rankedList = getstandings(playerDict)
@@ -939,16 +1020,16 @@ def printscoreboard(playerDict,
                                                   tiedPlayersList)
                 # Update rankings and order based on subrankings
                 for tS, tR in enumerate(subRank):
-                    print(jS+tS)
-                    print(jS+tR+1)
-                    print('--')
+                    # print(jS+tS)
+                    # print(jS+tR+1)
+                    # print('--')
                     playerRank[jS + tS] = jS + tR + 1
                     newRankedList[jS + tS] = subRankedList[tS]
                     fixedTies[jS + tS] = 1
         else:
             continue
 
-    print(playerRank)
+    # print(playerRank)
     # Update rankedList
     rankedList = newRankedList
 
@@ -967,12 +1048,12 @@ def printscoreboard(playerDict,
               ' #  Name' + ' '*12 + 'Pts  OppPts  Wins  Pts/Rd  OppPts/Rd\n')
     # Get nicely formatted string for printing
     s = '\n'.join([('{:2d}'.format(  # Rank
-                        js + 1  # playerRank[jS])
-                        # Don't use tiebreaking rank here as can only apply
-                        #   head to head for 2-way tie right now.
-                        if (playerDict[jP].score() !=
-                            playerDict[rankedList[jS-1]].score())
-                        else ' t') +
+                                   jS + 1)  # playerRank[jS]
+                    # Don't use tiebreaking rank here as can only apply
+                    #   head to head for 2-way tie right now.
+                    if (playerDict[jP].score() !=
+                        playerDict[rankedList[jS-1]].score())
+                    else ' t') +
                    '  {:15s}'.format(  # Name
                        playerDict[jP].name +
                        ('*' if playerDict[jP].nbyes > minByes
@@ -1175,7 +1256,7 @@ if __name__ == '__main__':
     # %% Define flags and other run criteria
 
     # True to produce bye-balancing round
-    finalRd_flag = False
+    finalRd_flag = True
 
     # Set number of rounds over which opponents will not be repeated
     opponentRepeatRdLimit = 2
@@ -1184,6 +1265,10 @@ if __name__ == '__main__':
     pinnedPlayer_flag = True
     pinnedPlayer = 'Player01'  # 'Matthew W'
     pinnedTable = 1
+
+    # Force byes on certain players for the upcoming round (if possible)
+    forceByes_flag = False
+    forceByeList = []
 
     # Set maximum number of guesses for creating a round
     maxRdAttempts = 1e6
@@ -1205,7 +1290,7 @@ if __name__ == '__main__':
     playersToDelete = [None]  # None  # list to remove players
 
     # Location to search for prior round state if not in memory
-    loadFile = (workDir + 'holdstate.txt')
+    loadFile = (workDir + 'holdstate_endrd2_withScores.txt')
     # loadFile = (workDir + 'holdstate_endrd3_withScores.txt')
 
     # %% Do things
@@ -1227,6 +1312,8 @@ if __name__ == '__main__':
         players,
         roundNum,
         finalRd_flag=finalRd_flag,
+        forceByes_flag=forceByes_flag,
+        forceByeList=forceByeList,
         forceScoreReporting_flag=True,
         maxRdAttempts=maxRdAttempts,
         opponentRepeatRdLimit=opponentRepeatRdLimit,
